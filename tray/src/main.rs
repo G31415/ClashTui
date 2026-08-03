@@ -22,8 +22,6 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 
 const CREATE_NEW_CONSOLE: u32 = 0x00000010;
 const CREATE_NO_WINDOW: u32 = 0x08000000;
-const AUTOSTART_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
-const AUTOSTART_NAME: &str = "ClashtuiTray";
 const CORE_API: &str = "http://127.0.0.1:9090";
 
 #[derive(Debug)]
@@ -55,10 +53,6 @@ fn clashtui_path() -> std::path::PathBuf {
         .find(|p| p.exists())
         .cloned()
         .unwrap_or_else(|| here.join("clashtui.exe"))
-}
-
-fn tray_exe_path() -> std::path::PathBuf {
-    std::env::current_exe().unwrap_or_else(|_| exe_dir().join("clashtui_tray.exe"))
 }
 
 fn launch_clashtui() {
@@ -147,8 +141,29 @@ fn tun_enabled() -> bool {
     }
 }
 
-/// Tooltip showing the currently selected item under the top-level 总体模式 group.
-fn overall_mode_tooltip() -> String {
+/// Measure real latency through the mihomo mixed-port proxy. This reflects the
+/// actual node chosen by the 智能选择 (Smart) group, since its now-target is a
+/// virtual "Smart - Select" that the API does not expose directly.
+fn measure_latency() -> Option<u64> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .proxy(reqwest::Proxy::all("http://127.0.0.1:7890").ok()?)
+        .build()
+        .ok()?;
+    let start = std::time::Instant::now();
+    let resp = client
+        .get("https://cp.cloudflare.com/generate_204")
+        .send()
+        .ok()?;
+    if resp.status().is_success() {
+        Some(start.elapsed().as_millis() as u64)
+    } else {
+        None
+    }
+}
+
+/// Name of the currently selected item under the top-level 总体模式 group.
+fn current_mode_name() -> String {
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(3))
         .build()
@@ -164,13 +179,23 @@ fn overall_mode_tooltip() -> String {
                         .and_then(|n| n.as_str())
                         .unwrap_or("");
                     if !now.is_empty() {
-                        return format!("总体模式：{now}");
+                        return now.to_string();
                     }
                 }
             }
         }
     }
     "总体模式".to_string()
+}
+
+/// Tooltip showing the current mode's name plus its real latency through the
+/// proxy (the actual node traffic uses).
+fn current_mode_tooltip() -> String {
+    let name = current_mode_name();
+    match measure_latency() {
+        Some(ms) => format!("{name} {ms}ms"),
+        None => format!("{name} FALSE"),
+    }
 }
 /// Check whether the Windows system proxy points at the core (enabled).
 fn system_proxy_enabled() -> bool {
@@ -197,6 +222,49 @@ extern "system" {
 
 const INTERNET_OPTION_SETTINGS_CHANGED: u32 = 39;
 const INTERNET_OPTION_REFRESH: u32 = 37;
+
+// kernel32 named mutex: single-instance detection. The handle is created in
+// the main process and kept alive for the whole process lifetime.
+#[link(name = "kernel32")]
+extern "system" {
+    fn CreateMutexW(
+        lp_mutex_attributes: *mut core::ffi::c_void,
+        b_initial_owner: i32,
+        lp_name: *const u16,
+    ) -> *mut core::ffi::c_void;
+    fn OpenMutexW(
+        dw_desired_access: u32,
+        b_inherit_handle: i32,
+        lp_name: *const u16,
+    ) -> *mut core::ffi::c_void;
+}
+const SYNCHRONIZE: u32 = 0x00100000;
+
+/// Return true if another tray instance already holds the named mutex.
+/// Strategy: try to open the existing mutex first (returns non-null if it
+/// exists). Only if it does NOT exist do we create it, which keeps the
+/// detection independent of GetLastError timing after CreateMutexW.
+fn single_instance_check() -> bool {
+    // The "\0" terminator is required: CreateMutexW/OpenMutexW take a
+    // null-terminated UTF-16 string. Without it the OS reads past the Vec
+    // into random memory until it hits a 0, so each process would compute a
+    // different (garbage) name and the mutex would never be found.
+    let name: Vec<u16> = "ClashtuiTraySingleton\0".encode_utf16().collect();
+    let opened = unsafe { OpenMutexW(SYNCHRONIZE, 0, name.as_ptr()) };
+    if !opened.is_null() {
+        // An existing instance is already running.
+        return true;
+    }
+    // No instance yet: create the mutex and keep the handle alive for the
+    // whole process lifetime (deliberately leaked) so other instances can
+    // detect us.
+    let handle = unsafe { CreateMutexW(std::ptr::null_mut(), 0, name.as_ptr()) };
+    if handle.is_null() {
+        // Cannot create the mutex; be conservative and let this instance run.
+        return false;
+    }
+    false
+}
 
 /// Enable or disable the Windows system proxy pointing at the core.
 fn set_system_proxy(enabled: bool) {
@@ -307,29 +375,6 @@ fn load_icon(mode: IconMode) -> Icon {
     Icon::from_rgba(rgba, 32, 32).unwrap_or_else(|_| Icon::from_rgba(vec![0; 0], 1, 1).unwrap())
 }
 
-fn autostart_enabled() -> bool {
-    use winreg::enums::HKEY_CURRENT_USER;
-    use winreg::RegKey;
-    match RegKey::predef(HKEY_CURRENT_USER).open_subkey(AUTOSTART_KEY) {
-        Ok(key) => key.get_value::<String, _>(AUTOSTART_NAME).is_ok(),
-        Err(_) => false,
-    }
-}
-
-fn set_autostart(enabled: bool) {
-    use winreg::enums::HKEY_CURRENT_USER;
-    use winreg::RegKey;
-    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    if enabled {
-        if let Ok(key) = hkcu.create_subkey(AUTOSTART_KEY) {
-            let cmd = format!("\"{}\"", tray_exe_path().to_string_lossy());
-            let _ = key.0.set_value(AUTOSTART_NAME, &cmd);
-        }
-    } else if let Ok(key) = hkcu.open_subkey(AUTOSTART_KEY) {
-        let _ = key.delete_value(AUTOSTART_NAME);
-    }
-}
-
 struct Application {
     tray_icon: Option<TrayIcon>,
     launch_item: Arc<MenuItem>,
@@ -338,7 +383,7 @@ struct Application {
     stop_core_item: Arc<MenuItem>,
     mode_tun: Arc<CheckMenuItem>,
     mode_sysproxy: Arc<CheckMenuItem>,
-    autostart_item: Arc<CheckMenuItem>,
+    exit_core_item: Arc<MenuItem>,
     exit_item: Arc<MenuItem>,
     last_tooltip_refresh: std::time::Instant,
 }
@@ -358,13 +403,7 @@ impl Application {
             mode == IconMode::SystemProxy,
             None,
         ));
-        let autostart_item = Arc::new(CheckMenuItem::new(
-            "开机自启",
-            true,
-            autostart_enabled(),
-            None,
-        ));
-        let sep = PredefinedMenuItem::separator();
+        let exit_core_item = Arc::new(MenuItem::new("关闭代理", true, None));
         let exit_item = Arc::new(MenuItem::new("退出", true, None));
         menu.append_items(&[
             launch_item.as_ref(),
@@ -376,8 +415,7 @@ impl Application {
             mode_tun.as_ref(),
             mode_sysproxy.as_ref(),
             &PredefinedMenuItem::separator(),
-            autostart_item.as_ref(),
-            &sep,
+            exit_core_item.as_ref(),
             exit_item.as_ref(),
         ])
         .expect("failed to build menu");
@@ -390,7 +428,7 @@ impl Application {
             stop_core_item,
             mode_tun,
             mode_sysproxy,
-            autostart_item,
+            exit_core_item,
             exit_item,
             last_tooltip_refresh: std::time::Instant::now(),
         }
@@ -405,10 +443,7 @@ impl Application {
         let mode = detect_mode();
         self.refresh_mode_checks(mode);
         let icon = load_icon(mode);
-        let tip = format!(
-            "{} | 左键开关，右键菜单",
-            overall_mode_tooltip()
-        );
+        let tip = current_mode_tooltip();
         self.tray_icon = Some(
             TrayIconBuilder::new()
                 .with_menu_on_left_click(false)
@@ -418,6 +453,21 @@ impl Application {
                 .build()
                 .expect("failed to create tray icon"),
         );
+    }
+
+    /// Update the icon/tooltip in place after a mode switch, without
+    /// destroying and recreating the tray icon. Rebuilding on every toggle
+    /// removes the icon from the Windows notification area and back, which
+    /// loses any pinned position the user set.
+    fn update_icon(&self) {
+        let mode = detect_mode();
+        self.refresh_mode_checks(mode);
+        let icon = load_icon(mode);
+        let tip = current_mode_tooltip();
+        if let Some(tray) = &self.tray_icon {
+            let _ = tray.set_icon(Some(icon));
+            let _ = tray.set_tooltip(Some(tip.as_str()));
+        }
     }
 
     fn menu(&self) -> Menu {
@@ -432,8 +482,7 @@ impl Application {
             self.mode_tun.as_ref(),
             self.mode_sysproxy.as_ref(),
             &PredefinedMenuItem::separator(),
-            self.autostart_item.as_ref(),
-            &PredefinedMenuItem::separator(),
+            self.exit_core_item.as_ref(),
             self.exit_item.as_ref(),
         ])
         .expect("failed to rebuild menu");
@@ -463,12 +512,10 @@ impl ApplicationHandler<UserEvent> for Application {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        // Refresh the tooltip periodically so it reflects the current
-        // selection under 总体模式 without spamming the API.
-        if self.last_tooltip_refresh.elapsed() >= std::time::Duration::from_secs(15) {
+        // Refresh the tooltip every 30s with a fresh real latency measurement.
+        if self.last_tooltip_refresh.elapsed() >= std::time::Duration::from_secs(30) {
             if let Some(tray) = &self.tray_icon {
-                let tip = format!("{} | 左键开关，右键菜单", overall_mode_tooltip());
-                let _ = tray.set_tooltip(Some(tip));
+                let _ = tray.set_tooltip(Some(current_mode_tooltip()));
             }
             self.last_tooltip_refresh = std::time::Instant::now();
         }
@@ -486,6 +533,13 @@ impl ApplicationHandler<UserEvent> for Application {
                 button: MouseButton::Left,
                 ..
             }) => toggle_clashtui(),
+            // Refresh the tooltip the moment the mouse hovers the icon.
+            UserEvent::TrayIcon(TrayIconEvent::Enter { .. }) => {
+                if let Some(tray) = &self.tray_icon {
+                    let _ = tray.set_tooltip(Some(current_mode_tooltip()));
+                }
+                self.last_tooltip_refresh = std::time::Instant::now();
+            }
             UserEvent::Menu(ev) => {
                 let id = ev.id;
                 if id == self.launch_item.id() {
@@ -505,8 +559,7 @@ impl ApplicationHandler<UserEvent> for Application {
                         IconMode::Tun
                     };
                     apply_mode(target);
-                    self.refresh_mode_checks(target);
-                    self.rebuild_tray();
+                    self.update_icon();
                 } else if id == self.mode_sysproxy.id() {
                     // Toggle: if system proxy is already active, clear it back.
                     let current = detect_mode();
@@ -516,12 +569,10 @@ impl ApplicationHandler<UserEvent> for Application {
                         IconMode::SystemProxy
                     };
                     apply_mode(target);
-                    self.refresh_mode_checks(target);
-                    self.rebuild_tray();
-                } else if id == self.autostart_item.id() {
-                    let enabled = !autostart_enabled();
-                    set_autostart(enabled);
-                    self.autostart_item.set_checked(enabled);
+                    self.update_icon();
+                } else if id == self.exit_core_item.id() {
+                    run_core_service(&["stop"]);
+                    _event_loop.exit();
                 } else if id == self.exit_item.id() {
                     _event_loop.exit();
                 }
@@ -532,6 +583,15 @@ impl ApplicationHandler<UserEvent> for Application {
 }
 
 fn main() {
+    // Single instance: if another tray process already holds the mutex,
+    // don't stack a second tray icon. Instead toggle clashtui (same as a
+    // left-click on the running tray) and exit this duplicate: launch it if
+    // it is not running, or close it if it already is.
+    if single_instance_check() {
+        toggle_clashtui();
+        return;
+    }
+
     let event_loop = EventLoop::<UserEvent>::with_user_event()
         .build()
         .expect("failed to create event loop");
