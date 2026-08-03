@@ -311,7 +311,6 @@ struct Application {
     stop_core_item: Arc<MenuItem>,
     mode_tun: Arc<CheckMenuItem>,
     mode_sysproxy: Arc<CheckMenuItem>,
-    mode_normal: Arc<CheckMenuItem>,
     autostart_item: Arc<CheckMenuItem>,
     exit_item: Arc<MenuItem>,
 }
@@ -319,22 +318,16 @@ struct Application {
 impl Application {
     fn new() -> Self {
         let menu = Menu::new();
-        let launch_item = Arc::new(MenuItem::new("启动 clashtui", true, None));
+        let launch_item = Arc::new(MenuItem::new("仪表盘", true, None));
         let web_item = Arc::new(MenuItem::new("打开网页端", true, None));
         let restart_core_item = Arc::new(MenuItem::new("重启内核", true, None));
         let stop_core_item = Arc::new(MenuItem::new("停止内核", true, None));
         let mode = detect_mode();
         let mode_tun = Arc::new(CheckMenuItem::new("TUN 模式", true, mode == IconMode::Tun, None));
         let mode_sysproxy = Arc::new(CheckMenuItem::new(
-            "系统代理模式",
+            "系统代理",
             true,
             mode == IconMode::SystemProxy,
-            None,
-        ));
-        let mode_normal = Arc::new(CheckMenuItem::new(
-            "常规模式",
-            true,
-            mode == IconMode::Normal,
             None,
         ));
         let autostart_item = Arc::new(CheckMenuItem::new(
@@ -354,7 +347,6 @@ impl Application {
             &PredefinedMenuItem::separator(),
             mode_tun.as_ref(),
             mode_sysproxy.as_ref(),
-            mode_normal.as_ref(),
             &PredefinedMenuItem::separator(),
             autostart_item.as_ref(),
             &sep,
@@ -370,7 +362,6 @@ impl Application {
             stop_core_item,
             mode_tun,
             mode_sysproxy,
-            mode_normal,
             autostart_item,
             exit_item,
         }
@@ -379,7 +370,6 @@ impl Application {
     fn refresh_mode_checks(&self, mode: IconMode) {
         self.mode_tun.set_checked(mode == IconMode::Tun);
         self.mode_sysproxy.set_checked(mode == IconMode::SystemProxy);
-        self.mode_normal.set_checked(mode == IconMode::Normal);
     }
 
     fn rebuild_tray(&mut self) {
@@ -391,11 +381,11 @@ impl Application {
                 .with_menu_on_left_click(false)
                 .with_menu(Box::new(self.menu()))
                 .with_tooltip(format!(
-                    "Clashtui 托盘 - 点击启动 ({})",
+                    "Clashtui 托盘 - 左键开关，右键菜单{}",
                     match mode {
-                        IconMode::Normal => "常规",
-                        IconMode::Tun => "TUN",
-                        IconMode::SystemProxy => "系统代理",
+                        IconMode::Normal => "",
+                        IconMode::Tun => " (TUN)",
+                        IconMode::SystemProxy => " (系统代理)",
                     }
                 ))
                 .with_icon(icon)
@@ -415,7 +405,6 @@ impl Application {
             &PredefinedMenuItem::separator(),
             self.mode_tun.as_ref(),
             self.mode_sysproxy.as_ref(),
-            self.mode_normal.as_ref(),
             &PredefinedMenuItem::separator(),
             self.autostart_item.as_ref(),
             &PredefinedMenuItem::separator(),
@@ -475,10 +464,6 @@ impl ApplicationHandler<UserEvent> for Application {
                 } else if id == self.mode_sysproxy.id() {
                     apply_mode(IconMode::SystemProxy);
                     self.refresh_mode_checks(IconMode::SystemProxy);
-                    self.rebuild_tray();
-                } else if id == self.mode_normal.id() {
-                    apply_mode(IconMode::Normal);
-                    self.refresh_mode_checks(IconMode::Normal);
                     self.rebuild_tray();
                 } else if id == self.autostart_item.id() {
                     let enabled = !autostart_enabled();
