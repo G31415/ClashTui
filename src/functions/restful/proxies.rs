@@ -125,8 +125,8 @@ pub fn fetch_proxies() -> Result<ProxiesResponse> {
     // nodes in the global /proxies map, so delay/selection data for those
     // nodes is invisible to the TUI. Fetching /providers/proxies and merging
     // any unknown names back in fixes the display.
-    if let Ok(prov_resp) = request(Method::Get, "/providers/proxies", None)
-        .and_then(|r| r.json::<serde_json::Value>())
+    if let Ok(prov_resp) =
+        request(Method::Get, "/providers/proxies", None).and_then(|r| r.json::<serde_json::Value>())
     {
         if let Some(providers) = prov_resp.get("providers").and_then(|p| p.as_object()) {
             for pval in providers.values() {

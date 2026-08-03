@@ -101,6 +101,22 @@ impl Proxies {
                     state.select(Some(self.tree.len().saturating_sub(1)));
                 }
             }
+            super::Key::GoToNow => {
+                let info = self
+                    .tree
+                    .node_at(current)
+                    .map(|n| (n.name.clone(), n.node_type.clone()));
+                if let Some((name, NodeType::Folder)) = info {
+                    // Ensure the folder is expanded so its children are visible.
+                    if !self.tree.is_folder_expanded(&name) {
+                        self.tree.expand_at(&name, &self.proxies);
+                    }
+                    // Jump the cursor to the currently selected (now) child.
+                    if let Some(idx) = self.tree.find_now_child_index(&name) {
+                        state.select(Some(idx));
+                    }
+                }
+            }
             super::Key::Parent => {
                 let info = self.tree.node_at(current).map(|n| n.parent.clone());
                 if let Some(Some(ref parent)) = info

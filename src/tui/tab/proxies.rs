@@ -24,6 +24,11 @@ mod_agent!(
             "Go to top"
         ),
         ([KeyCode::Char('G')], Key::GoBottom, "Go to bottom"),
+        (
+            [KeyCode::Char('g'), KeyCode::Char('n')],
+            Key::GoToNow,
+            "Jump to group's selected node"
+        ),
         ([KeyCode::Char('/')], Key::Search, "Search/Filter"),
         (
             [KeyCode::Char('s'), KeyCode::Char('n')],
@@ -100,6 +105,7 @@ pub enum Key {
     Search,
     FzfFind,
     GroupSelect,
+    GoToNow,
 }
 
 impl TryFrom<&crate::tui::Key> for Key {

@@ -264,6 +264,22 @@ impl ProxyTree {
         self.nodes.get(idx)
     }
 
+    /// Whether the named folder is currently expanded.
+    pub fn is_folder_expanded(&self, name: &str) -> bool {
+        self.nodes
+            .iter()
+            .find(|n| n.node_type == NodeType::Folder && n.name == name)
+            .map(|n| n.expanded)
+            .unwrap_or(false)
+    }
+
+    /// Index of the child of `folder` that is the currently selected (now) node.
+    pub fn find_now_child_index(&self, folder: &str) -> Option<usize> {
+        self.nodes
+            .iter()
+            .position(|n| n.parent.as_deref() == Some(folder) && n.is_now)
+    }
+
     /// Set the sort mode for a folder, update the persisted state and write it
     /// to disk so the choice survives restarts.
     pub fn set_sort_mode(&mut self, name: &str, mode: SortMode) {

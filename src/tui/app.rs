@@ -47,10 +47,7 @@ static GLOBAL_CHORD_SHORTCUTS: LazyLock<Vec<(KeyCombo, &str)>> = LazyLock::new(|
             KeyCombo(vec![ctrl('g'), plain('t')]),
             "Close all connections",
         ),
-        (
-            KeyCombo(vec![ctrl('g'), plain('w')]),
-            "Open web dashboard",
-        ),
+        (KeyCombo(vec![ctrl('g'), plain('w')]), "Open web dashboard"),
     ]
 });
 
