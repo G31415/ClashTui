@@ -22,7 +22,13 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 
 const CREATE_NEW_CONSOLE: u32 = 0x00000010;
 const CREATE_NO_WINDOW: u32 = 0x08000000;
-const CORE_API: &str = "http://127.0.0.1:9090";
+/// Fallback external controller address (host:port), used when the mihomo
+/// runtime config cannot be read.
+const DEFAULT_CONTROLLER: &str = "127.0.0.1:9090";
+/// Fallback mixed-port used when the core config cannot be read.
+const DEFAULT_MIXED_PORT: u16 = 7890;
+/// Top-level selector group whose `now` field names the active mode.
+const MODE_GROUP_NAME: &str = "总体模式";
 
 #[derive(Debug)]
 enum UserEvent {
@@ -43,6 +49,92 @@ fn exe_dir() -> std::path::PathBuf {
         .ok()
         .and_then(|p| p.parent().map(|d| d.to_path_buf()))
         .unwrap_or_else(|| std::path::PathBuf::from("."))
+}
+
+/// Path to the mihomo runtime config (mihomo/data/config.yaml), relative to the
+/// tray exe. The tray lives next to clashtui.exe; the core's data dir is one
+/// level down under mihomo/. Falling back to exe_dir keeps it working when the
+/// layout differs.
+fn core_config_path() -> std::path::PathBuf {
+    let here = exe_dir();
+    let candidates = [
+        here.join("mihomo").join("data").join("config.yaml"),
+        here.join("..").join("mihomo").join("data").join("config.yaml"),
+    ];
+    candidates
+        .iter()
+        .find(|p| p.exists())
+        .cloned()
+        .unwrap_or_else(|| candidates[0].clone())
+}
+
+/// Parse a top-level scalar string field from the mihomo runtime config.
+/// Only matches keys at column 0 so a nested `mixed-port` inside a provider
+/// block can't shadow the real top-level value. Handles `key: value`,
+/// `key: 'value'`, and `key: "value"`.
+fn config_value(key: &str) -> Option<String> {
+    let path = core_config_path();
+    let content = std::fs::read_to_string(&path).ok()?;
+    for line in content.lines() {
+        if line.starts_with(char::is_whitespace) {
+            continue; // nested key — skip
+        }
+        let Some((k, v)) = line.split_once(':') else { continue };
+        if k != key {
+            continue;
+        }
+        let v = v.trim();
+        let v = v
+            .strip_prefix('\'')
+            .or_else(|| v.strip_prefix('"'))
+            .and_then(|s| s.strip_suffix('\'').or_else(|| s.strip_suffix('"')))
+            .unwrap_or(v);
+        let v = v.trim();
+        if v.is_empty() {
+            continue;
+        }
+        return Some(v.to_string());
+    }
+    None
+}
+
+/// Normalize a `host:port` controller string into a full http URL.
+/// `0.0.0.0`/`*` binds are rewritten to loopback so the tray always talks to
+/// the local core.
+fn controller_url(host_port: &str) -> String {
+    let hp = host_port.trim();
+    let hp = hp
+        .strip_prefix("http://")
+        .or_else(|| hp.strip_prefix("https://"))
+        .unwrap_or(hp);
+    let normalized = if hp.starts_with("0.0.0.0") || hp.starts_with("*") {
+        format!("127.0.0.1{}", &hp[hp.find(':').map(|i| i + 1).unwrap_or(hp.len())..])
+    } else {
+        hp.to_string()
+    };
+    format!("http://{normalized}")
+}
+
+/// Base URL of the core's external controller (API). Read from the runtime
+/// config so a changed external-controller/mixed-port is picked up without a
+/// rebuild; falls back to the default when the config is unavailable.
+fn core_api_url() -> String {
+    match config_value("external-controller") {
+        Some(hp) => controller_url(&hp),
+        None => format!("http://{DEFAULT_CONTROLLER}"),
+    }
+}
+
+/// The proxy port (mixed-port) used for latency measurement and the Windows
+/// system proxy. Read from the runtime config so it tracks config changes.
+fn proxy_port() -> u16 {
+    match config_value("mixed-port")
+        .and_then(|p| p.parse::<u16>().ok())
+        .filter(|&p| p > 0)
+    {
+        Some(p) => p,
+        None => DEFAULT_MIXED_PORT,
+    }
 }
 
 fn clashtui_path() -> std::path::PathBuf {
@@ -113,8 +205,9 @@ fn toggle_clashtui() {
 }
 
 fn open_web() {
+    let url = format!("{}/ui/", core_api_url());
     let _ = Command::new("cmd")
-        .args(["/c", "start", "", "http://127.0.0.1:9090/ui/"])
+        .args(["/c", "start", "", &url])
         .creation_flags(CREATE_NO_WINDOW)
         .spawn();
 }
@@ -126,7 +219,7 @@ fn tun_enabled() -> bool {
         .build()
         .ok();
     match client {
-        Some(c) => match c.get(format!("{CORE_API}/configs")).send() {
+        Some(c) => match c.get(format!("{}/configs", core_api_url())).send() {
             Ok(resp) if resp.status().is_success() => match resp.json::<serde_json::Value>() {
                 Ok(v) => v
                     .get("tun")
@@ -145,14 +238,15 @@ fn tun_enabled() -> bool {
 /// actual node chosen by the 智能选择 (Smart) group, since its now-target is a
 /// virtual "Smart - Select" that the API does not expose directly.
 fn measure_latency() -> Option<u64> {
+    let proxy_url = format!("http://127.0.0.1:{}", proxy_port());
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
-        .proxy(reqwest::Proxy::all("http://127.0.0.1:7890").ok()?)
+        .proxy(reqwest::Proxy::all(&proxy_url).ok()?)
         .build()
         .ok()?;
     let start = std::time::Instant::now();
     let resp = client
-        .get("https://cp.cloudflare.com/generate_204")
+        .get("http://www.gstatic.com/generate_204")
         .send()
         .ok()?;
     if resp.status().is_success() {
@@ -169,12 +263,12 @@ fn current_mode_name() -> String {
         .build()
         .ok();
     if let Some(c) = client {
-        if let Ok(resp) = c.get(format!("{CORE_API}/proxies")).send() {
+        if let Ok(resp) = c.get(format!("{}/proxies", core_api_url())).send() {
             if resp.status().is_success() {
                 if let Ok(v) = resp.json::<serde_json::Value>() {
                     let now = v
                         .get("proxies")
-                        .and_then(|p| p.get("总体模式"))
+                        .and_then(|p| p.get(MODE_GROUP_NAME))
                         .and_then(|g| g.get("now"))
                         .and_then(|n| n.as_str())
                         .unwrap_or("");
@@ -185,7 +279,7 @@ fn current_mode_name() -> String {
             }
         }
     }
-    "总体模式".to_string()
+    MODE_GROUP_NAME.to_string()
 }
 
 /// Tooltip showing the current mode's name plus its real latency through the
@@ -277,7 +371,7 @@ fn set_system_proxy(enabled: bool) {
     ) {
         if enabled {
             let _ = key.set_value("ProxyEnable", &1u32);
-            let _ = key.set_value("ProxyServer", &"127.0.0.1:7890");
+            let _ = key.set_value("ProxyServer", &format!("127.0.0.1:{}", proxy_port()));
         } else {
             let _ = key.set_value("ProxyEnable", &0u32);
         }
@@ -308,7 +402,7 @@ fn set_tun(enabled: bool) {
     if let Some(c) = client {
         let payload = serde_json::json!({ "tun": { "enable": enabled } });
         let _ = c
-            .patch(format!("{CORE_API}/configs"))
+            .patch(format!("{}/configs", core_api_url()))
             .json(&payload)
             .send();
     }
