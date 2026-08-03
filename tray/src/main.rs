@@ -458,12 +458,26 @@ impl ApplicationHandler<UserEvent> for Application {
                 } else if id == self.stop_core_item.id() {
                     run_core_service(&["stop"]);
                 } else if id == self.mode_tun.id() {
-                    apply_mode(IconMode::Tun);
-                    self.refresh_mode_checks(IconMode::Tun);
+                    // Toggle: if TUN is already active, clear it back to normal.
+                    let current = detect_mode();
+                    let target = if current == IconMode::Tun {
+                        IconMode::Normal
+                    } else {
+                        IconMode::Tun
+                    };
+                    apply_mode(target);
+                    self.refresh_mode_checks(target);
                     self.rebuild_tray();
                 } else if id == self.mode_sysproxy.id() {
-                    apply_mode(IconMode::SystemProxy);
-                    self.refresh_mode_checks(IconMode::SystemProxy);
+                    // Toggle: if system proxy is already active, clear it back.
+                    let current = detect_mode();
+                    let target = if current == IconMode::SystemProxy {
+                        IconMode::Normal
+                    } else {
+                        IconMode::SystemProxy
+                    };
+                    apply_mode(target);
+                    self.refresh_mode_checks(target);
                     self.rebuild_tray();
                 } else if id == self.autostart_item.id() {
                     let enabled = !autostart_enabled();
