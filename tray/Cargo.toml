@@ -1,0 +1,25 @@
+[package]
+name = "clashtui-tray"
+version = "0.1.0"
+edition = "2021"
+description = "System tray launcher for clashtui"
+
+[[bin]]
+name = "clashtui_tray"
+path = "src/main.rs"
+
+[dependencies]
+tray-icon = "0.19"
+muda = "0.15"
+winit = "0.30"
+image = "0.25"
+winreg = "0.52"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json"] }
+serde_json = "1"
+
+[profile.release]
+codegen-units = 1
+lto = true
+strip = true
+panic = "abort"
+opt-level = "z"
