@@ -240,27 +240,18 @@ fn apply_mode(mode: IconMode) {
 /// Load one of the bundled PNG icons (scaled to tray size), falling back to
 /// a generated solid-color square.
 fn load_icon(mode: IconMode) -> Icon {
-    let here = exe_dir();
-    let name = match mode {
-        IconMode::Tun => "tray_tun.png",
-        IconMode::SystemProxy => "tray_sysproxy.png",
-        IconMode::Normal => "tray_white.png",
+    // Icons are embedded at compile time so the tray exe is self-contained.
+    let data = match mode {
+        IconMode::Tun => include_bytes!("../assets/tray_tun.png").as_slice(),
+        IconMode::SystemProxy => include_bytes!("../assets/tray_sysproxy.png").as_slice(),
+        IconMode::Normal => include_bytes!("../assets/tray_white.png").as_slice(),
     };
-    let paths = [
-        here.join("assets").join(name),
-        here.join(name),
-        here.join("..").join("tray").join("assets").join(name),
-    ];
-    for p in &paths {
-        if p.exists() {
-            if let Ok(img) = image::open(&p) {
-                let small = img.thumbnail(64, 64).into_rgba8();
-                let (w, h) = small.dimensions();
-                let rgba = small.into_raw();
-                if let Ok(icon) = Icon::from_rgba(rgba, w, h) {
-                    return icon;
-                }
-            }
+    if let Ok(img) = image::load_from_memory(data) {
+        let small = img.thumbnail(64, 64).into_rgba8();
+        let (w, h) = small.dimensions();
+        let rgba = small.into_raw();
+        if let Ok(icon) = Icon::from_rgba(rgba, w, h) {
+            return icon;
         }
     }
     // Fallback: 32x32 solid square
