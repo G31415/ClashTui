@@ -363,6 +363,7 @@ open_dir_cmd: ""
         let extra = Extra {
             edit_cmd: None,
             open_dir_cmd: None,
+            ..Default::default()
         };
         let serialized = serde_yml::to_string(&extra).unwrap();
         let deser: Extra = serde_yml::from_str(&serialized).unwrap();
@@ -375,6 +376,7 @@ open_dir_cmd: ""
         let extra = Extra {
             edit_cmd: Some(r#"notepad.exe "%s""#.into()),
             open_dir_cmd: Some(r#"explorer "%s""#.into()),
+            ..Default::default()
         };
         let serialized = serde_yml::to_string(&extra).unwrap();
         let deser: Extra = serde_yml::from_str(&serialized).unwrap();
