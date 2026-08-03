@@ -147,6 +147,31 @@ fn tun_enabled() -> bool {
     }
 }
 
+/// Tooltip showing the currently selected item under the top-level 总体模式 group.
+fn overall_mode_tooltip() -> String {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+        .ok();
+    if let Some(c) = client {
+        if let Ok(resp) = c.get(format!("{CORE_API}/proxies")).send() {
+            if resp.status().is_success() {
+                if let Ok(v) = resp.json::<serde_json::Value>() {
+                    let now = v
+                        .get("proxies")
+                        .and_then(|p| p.get("总体模式"))
+                        .and_then(|g| g.get("now"))
+                        .and_then(|n| n.as_str())
+                        .unwrap_or("");
+                    if !now.is_empty() {
+                        return format!("总体模式：{now}");
+                    }
+                }
+            }
+        }
+    }
+    "总体模式".to_string()
+}
 /// Check whether the Windows system proxy points at the core (enabled).
 fn system_proxy_enabled() -> bool {
     use winreg::enums::HKEY_CURRENT_USER;
@@ -315,6 +340,7 @@ struct Application {
     mode_sysproxy: Arc<CheckMenuItem>,
     autostart_item: Arc<CheckMenuItem>,
     exit_item: Arc<MenuItem>,
+    last_tooltip_refresh: std::time::Instant,
 }
 
 impl Application {
@@ -366,6 +392,7 @@ impl Application {
             mode_sysproxy,
             autostart_item,
             exit_item,
+            last_tooltip_refresh: std::time::Instant::now(),
         }
     }
 
@@ -378,18 +405,15 @@ impl Application {
         let mode = detect_mode();
         self.refresh_mode_checks(mode);
         let icon = load_icon(mode);
+        let tip = format!(
+            "{} | 左键开关，右键菜单",
+            overall_mode_tooltip()
+        );
         self.tray_icon = Some(
             TrayIconBuilder::new()
                 .with_menu_on_left_click(false)
                 .with_menu(Box::new(self.menu()))
-                .with_tooltip(format!(
-                    "Clashtui 托盘 - 左键开关，右键菜单{}",
-                    match mode {
-                        IconMode::Normal => "",
-                        IconMode::Tun => " (TUN)",
-                        IconMode::SystemProxy => " (系统代理)",
-                    }
-                ))
+                .with_tooltip(&tip)
                 .with_icon(icon)
                 .build()
                 .expect("failed to create tray icon"),
@@ -436,6 +460,19 @@ impl ApplicationHandler<UserEvent> for Application {
         if winit::event::StartCause::Init == cause {
             self.rebuild_tray();
         }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        // Refresh the tooltip periodically so it reflects the current
+        // selection under 总体模式 without spamming the API.
+        if self.last_tooltip_refresh.elapsed() >= std::time::Duration::from_secs(15) {
+            if let Some(tray) = &self.tray_icon {
+                let tip = format!("{} | 左键开关，右键菜单", overall_mode_tooltip());
+                let _ = tray.set_tooltip(Some(tip));
+            }
+            self.last_tooltip_refresh = std::time::Instant::now();
+        }
+        event_loop.set_control_flow(winit::event_loop::ControlFlow::Wait);
     }
 
     fn user_event(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop, event: UserEvent) {
