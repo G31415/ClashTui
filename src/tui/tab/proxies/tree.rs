@@ -1,7 +1,7 @@
 use indexmap::IndexMap;
 use std::collections::{HashMap, HashSet};
 
-#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug, serde::Serialize, serde::Deserialize)]
 pub enum SortMode {
     #[default]
     None,
@@ -35,12 +35,15 @@ pub struct NodeItem {
 pub struct ProxyTree {
     pub nodes: Vec<NodeItem>,
     pub name_index: HashMap<String, usize>,
+    /// Persisted per-group sort mode, loaded from disk on build.
+    sort_state: HashMap<String, SortMode>,
 }
 
 impl ProxyTree {
     pub fn build(response: crate::functions::restful::proxies::ProxiesResponse) -> Self {
         let proxies = response.proxies;
         let mut tree = ProxyTree::default();
+        tree.sort_state = load_sort_state().unwrap_or_default();
         tree.rebuild_from_proxies(&proxies);
         tree
     }
@@ -56,12 +59,14 @@ impl ProxyTree {
             .map(|n| (n.name.clone(), true))
             .collect();
 
-        let sort_map: HashMap<String, SortMode> = self
-            .nodes
-            .iter()
-            .filter(|n| n.node_type == NodeType::Folder && n.sort_mode != SortMode::None)
-            .map(|n| (n.name.clone(), n.sort_mode))
-            .collect();
+        // In-memory sort mode set this session wins; otherwise fall back to the
+        // persisted per-group sort state so it survives restarts.
+        let mut sort_map: HashMap<String, SortMode> = self.sort_state.clone();
+        for node in &self.nodes {
+            if node.node_type == NodeType::Folder && node.sort_mode != SortMode::None {
+                sort_map.insert(node.name.clone(), node.sort_mode);
+            }
+        }
 
         let mut nodes = Vec::new();
 
@@ -259,6 +264,20 @@ impl ProxyTree {
         self.nodes.get(idx)
     }
 
+    /// Set the sort mode for a folder, update the persisted state and write it
+    /// to disk so the choice survives restarts.
+    pub fn set_sort_mode(&mut self, name: &str, mode: SortMode) {
+        if let Some(idx) = self.find_folder_index(name) {
+            self.nodes[idx].sort_mode = mode;
+        }
+        if mode == SortMode::None {
+            self.sort_state.remove(name);
+        } else {
+            self.sort_state.insert(name.to_string(), mode);
+        }
+        let _ = save_sort_state(&self.sort_state);
+    }
+
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
     }
@@ -310,6 +329,34 @@ fn resolve_now_delay(
             _ => return pick_delay(proxy.history.last()),
         }
     }
+}
+
+const SORT_STATE_FILE: &str = "sort_state.yaml";
+
+fn sort_state_path() -> std::path::PathBuf {
+    crate::config::config_dir_path().join(SORT_STATE_FILE)
+}
+
+/// Load persisted per-group sort mode, if any.
+fn load_sort_state() -> Option<HashMap<String, SortMode>> {
+    let path = sort_state_path();
+    if !path.exists() {
+        return None;
+    }
+    let content = std::fs::read_to_string(&path).ok()?;
+    serde_yml::from_str(&content).ok()
+}
+
+/// Persist per-group sort mode so it survives restarts.
+fn save_sort_state(state: &HashMap<String, SortMode>) -> anyhow::Result<()> {
+    let path = sort_state_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    let fp = std::fs::File::create(&path)
+        .map_err(|e| anyhow::anyhow!("Failed to create {}: {e}", path.display()))?;
+    serde_yml::to_writer(fp, state)
+        .map_err(|e| anyhow::anyhow!("Failed to write {}: {e}", path.display()))
 }
 
 #[cfg(test)]

@@ -35,6 +35,13 @@ impl Proxies {
     }
 }
 
+/// Timeout (ms) passed to the core for a single node delay test.
+/// Kept short so a large group (many nodes) finishes within the overall wait.
+const TEST_DELAY_TIMEOUT_MS: u64 = 3000;
+
+/// Overall wait (seconds) for a speed-test operation to complete.
+const TEST_WAIT_SECS: u64 = 20;
+
 impl Proxies {
     pub fn select_inline(&mut self, group: String, node: String, task_set: &mut FutureSet<Self>) {
         let t_secs = crate::config::CONFIG.cfg_file.timeout.unwrap_or(5).max(1) + 3;
@@ -72,9 +79,9 @@ impl Proxies {
     }
 
     pub fn test_delay(&mut self, name: String, ntype: NodeType, task_set: &mut FutureSet<Self>) {
-        let timeout = crate::config::CONFIG.cfg_file.timeout.unwrap_or(5) * 1000;
+        let timeout = TEST_DELAY_TIMEOUT_MS;
         let test_url = self.proxies.get(&name).and_then(|p| p.test_url.clone());
-        let t_secs = crate::config::CONFIG.cfg_file.timeout.unwrap_or(5).max(1) + 3;
+        let t_secs = TEST_WAIT_SECS;
 
         match ntype {
             NodeType::Folder => {
@@ -215,11 +222,11 @@ impl Proxies {
             return;
         }
         let proxies_map = self.proxies.clone();
-        let timeout = crate::config::CONFIG.cfg_file.timeout.unwrap_or(5) * 1000;
+        let timeout = TEST_DELAY_TIMEOUT_MS;
         self.error = Some(format!("Testing all ({total} groups/nodes)..."));
         self.testing_since = Some(Instant::now());
         async move {
-            let t_secs = crate::config::CONFIG.cfg_file.timeout.unwrap_or(5).max(1) + 3;
+            let t_secs = TEST_WAIT_SECS;
             let mut all_delays: HashMap<String, u64> = HashMap::new();
             for name in &folders {
                 let url = proxies_map

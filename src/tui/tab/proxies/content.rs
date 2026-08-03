@@ -164,7 +164,7 @@ impl Proxies {
                     } else {
                         SortMode::ByName
                     };
-                    self.tree.nodes[idx].sort_mode = new_mode;
+                    self.tree.set_sort_mode(&group_name, new_mode);
                     let key = self.selection_key(state);
                     self.tree.rebuild_from_proxies(&self.proxies);
                     self.restore_selection(key, state);
@@ -179,7 +179,7 @@ impl Proxies {
                     } else {
                         SortMode::ByDelay
                     };
-                    self.tree.nodes[idx].sort_mode = new_mode;
+                    self.tree.set_sort_mode(&group_name, new_mode);
                     let key = self.selection_key(state);
                     self.tree.rebuild_from_proxies(&self.proxies);
                     self.restore_selection(key, state);
@@ -187,9 +187,9 @@ impl Proxies {
             }
             super::Key::ResetSort => {
                 if let Some(group_name) = self.resolve_group_for_sort(current)
-                    && let Some(idx) = self.tree.find_folder_index(&group_name)
+                    && self.tree.find_folder_index(&group_name).is_some()
                 {
-                    self.tree.nodes[idx].sort_mode = SortMode::None;
+                    self.tree.set_sort_mode(&group_name, SortMode::None);
                     let key = self.selection_key(state);
                     self.tree.rebuild_from_proxies(&self.proxies);
                     self.restore_selection(key, state);
@@ -207,10 +207,15 @@ impl Proxies {
                 } else {
                     SortMode::ByName
                 };
-                for node in &mut self.tree.nodes {
-                    if node.node_type == NodeType::Folder {
-                        node.sort_mode = new_mode;
-                    }
+                let folder_names: Vec<String> = self
+                    .tree
+                    .nodes
+                    .iter()
+                    .filter(|n| n.node_type == NodeType::Folder)
+                    .map(|n| n.name.clone())
+                    .collect();
+                for name in &folder_names {
+                    self.tree.set_sort_mode(name, new_mode);
                 }
                 let key = self.selection_key(state);
                 self.tree.rebuild_from_proxies(&self.proxies);
@@ -228,20 +233,30 @@ impl Proxies {
                 } else {
                     SortMode::ByDelay
                 };
-                for node in &mut self.tree.nodes {
-                    if node.node_type == NodeType::Folder {
-                        node.sort_mode = new_mode;
-                    }
+                let folder_names: Vec<String> = self
+                    .tree
+                    .nodes
+                    .iter()
+                    .filter(|n| n.node_type == NodeType::Folder)
+                    .map(|n| n.name.clone())
+                    .collect();
+                for name in &folder_names {
+                    self.tree.set_sort_mode(name, new_mode);
                 }
                 let key = self.selection_key(state);
                 self.tree.rebuild_from_proxies(&self.proxies);
                 self.restore_selection(key, state);
             }
             super::Key::GlobalResetSort => {
-                for node in &mut self.tree.nodes {
-                    if node.node_type == NodeType::Folder {
-                        node.sort_mode = SortMode::None;
-                    }
+                let folder_names: Vec<String> = self
+                    .tree
+                    .nodes
+                    .iter()
+                    .filter(|n| n.node_type == NodeType::Folder)
+                    .map(|n| n.name.clone())
+                    .collect();
+                for name in &folder_names {
+                    self.tree.set_sort_mode(&name, SortMode::None);
                 }
                 let key = self.selection_key(state);
                 self.tree.rebuild_from_proxies(&self.proxies);

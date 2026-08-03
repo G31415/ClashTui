@@ -306,6 +306,16 @@ pub fn open_dir(path: &str) -> Result<()> {
     shell_spawn(tpl, path)
 }
 
+/// Open the core web dashboard in the default browser (or a configured
+/// command via `extra.open_web_cmd`, where `%s` is replaced with the UI URL).
+pub fn open_web() -> Result<()> {
+    let tpl = CONFIG.cfg_file.extra.open_web_cmd.as_deref().unwrap_or("");
+    let controller = CONFIG.controller_for_core();
+    let url = format!("{controller}/ui/");
+    log::debug!("open_web: url={url} template={tpl}");
+    shell_spawn(tpl, &url)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

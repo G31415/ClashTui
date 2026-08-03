@@ -144,6 +144,10 @@ impl Default for ConfigFile {
 pub struct Extra {
     pub edit_cmd: Option<String>,
     pub open_dir_cmd: Option<String>,
+    /// Command to open the core web dashboard. `%s` is replaced with the UI URL.
+    pub open_web_cmd: Option<String>,
+    /// Index of the tab to open on startup (0=Status, 1=File, 2=Proxies, ...).
+    pub default_tab: Option<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]

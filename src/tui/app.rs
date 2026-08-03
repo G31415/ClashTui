@@ -47,6 +47,10 @@ static GLOBAL_CHORD_SHORTCUTS: LazyLock<Vec<(KeyCombo, &str)>> = LazyLock::new(|
             KeyCombo(vec![ctrl('g'), plain('t')]),
             "Close all connections",
         ),
+        (
+            KeyCombo(vec![ctrl('g'), plain('w')]),
+            "Open web dashboard",
+        ),
     ]
 });
 
@@ -78,7 +82,12 @@ impl App {
             help: HelpPanel::default(),
             tab_index: 0,
         };
-        app.tabs[0].on_enter();
+        // Apply configured default tab, if any (clamped to valid range).
+        if let Some(t) = crate::config::CONFIG.cfg_file.extra.default_tab {
+            let max = (app.tabs.len() - 1) as u8;
+            app.tab_index = t.min(max);
+        }
+        app.tabs[app.tab_index as usize].on_enter();
         app
     }
     #[cfg(target_family = "unix")]
@@ -245,6 +254,10 @@ impl App {
                             log::debug!("close all connections");
                             let _ =
                                 crate::functions::restful::connection::terminate_all_connections();
+                        }
+                        Some('w') => {
+                            log::debug!("open web dashboard");
+                            let _ = crate::functions::command::open_web();
                         }
                         _ => {}
                     }

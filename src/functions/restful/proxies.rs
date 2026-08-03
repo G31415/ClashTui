@@ -118,7 +118,36 @@ impl<'de> Deserialize<'de> for DelayInfo {
 }
 
 pub fn fetch_proxies() -> Result<ProxiesResponse> {
-    request(Method::Get, "/proxies", None).and_then(|r| r.json())
+    let mut resp: ProxiesResponse = request(Method::Get, "/proxies", None)?.json()?;
+
+    // Merge leaf nodes exposed by proxy-providers into the top-level map.
+    // Some cores (e.g. mihomo smart builds) do NOT register provider leaf
+    // nodes in the global /proxies map, so delay/selection data for those
+    // nodes is invisible to the TUI. Fetching /providers/proxies and merging
+    // any unknown names back in fixes the display.
+    if let Ok(prov_resp) = request(Method::Get, "/providers/proxies", None)
+        .and_then(|r| r.json::<serde_json::Value>())
+    {
+        if let Some(providers) = prov_resp.get("providers").and_then(|p| p.as_object()) {
+            for pval in providers.values() {
+                if let Some(plist) = pval.get("proxies").and_then(|p| p.as_array()) {
+                    for pnode in plist {
+                        let name = match pnode.get("name").and_then(|n| n.as_str()) {
+                            Some(n) => n.to_string(),
+                            None => continue,
+                        };
+                        if resp.proxies.contains_key(&name) {
+                            continue;
+                        }
+                        if let Ok(p) = serde_json::from_value::<Proxy>(pnode.clone()) {
+                            resp.proxies.insert(name, p);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(resp)
 }
 
 pub fn select_proxy(group: &str, node: &str) -> Result<()> {
