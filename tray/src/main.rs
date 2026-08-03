@@ -20,7 +20,6 @@ use winit::application::ApplicationHandler;
 use winit::event::{WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 
-const CREATE_NEW_CONSOLE: u32 = 0x00000010;
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 const AUTOSTART_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 const AUTOSTART_NAME: &str = "ClashtuiTray";
@@ -64,8 +63,13 @@ fn tray_exe_path() -> std::path::PathBuf {
 fn launch_clashtui() {
     let path = clashtui_path();
     if path.exists() {
-        let _ = Command::new(&path)
-            .creation_flags(CREATE_NEW_CONSOLE)
+        // The tray is a GUI subsystem process with no console. Using
+        // CREATE_NEW_CONSOLE from a GUI process does not reliably create a
+        // visible console window for a console app, so go through cmd start
+        // to guarantee clashtui gets its own terminal window.
+        let _ = Command::new("cmd")
+            .args(["/c", "start", "", &path.to_string_lossy()])
+            .creation_flags(CREATE_NO_WINDOW)
             .spawn();
     }
 }
@@ -371,6 +375,7 @@ impl Application {
         let icon = load_icon(mode);
         self.tray_icon = Some(
             TrayIconBuilder::new()
+                .with_menu_on_left_click(false)
                 .with_menu(Box::new(self.menu()))
                 .with_tooltip(format!(
                     "Clashtui 托盘 - 点击启动 ({})",
