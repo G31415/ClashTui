@@ -20,6 +20,7 @@ use winit::application::ApplicationHandler;
 use winit::event::{WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 
+const CREATE_NEW_CONSOLE: u32 = 0x00000010;
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 const AUTOSTART_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 const AUTOSTART_NAME: &str = "ClashtuiTray";
@@ -63,10 +64,9 @@ fn tray_exe_path() -> std::path::PathBuf {
 fn launch_clashtui() {
     let path = clashtui_path();
     if path.exists() {
-        // The tray is a GUI subsystem process with no console. Using
-        // CREATE_NEW_CONSOLE from a GUI process does not reliably create a
-        // visible console window for a console app, so go through cmd start
-        // to guarantee clashtui gets its own terminal window.
+        // Launch via cmd start: this reliably gives the console app a window
+        // and Windows routes it into Windows Terminal by default (matching a
+        // manual launch).
         let _ = Command::new("cmd")
             .args(["/c", "start", "", &path.to_string_lossy()])
             .creation_flags(CREATE_NO_WINDOW)
@@ -74,22 +74,17 @@ fn launch_clashtui() {
     }
 }
 
-const MIHOMO_SERVICE: &str = "clashtui_mihomo";
-
-/// Start the mihomo core service (best-effort; may need admin rights).
-fn start_mihomo_service() {
-    let _ = Command::new("sc")
-        .args(["start", MIHOMO_SERVICE])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output();
-}
-
-/// Stop the mihomo core service (best-effort; may need admin rights).
-fn stop_mihomo_service() {
-    let _ = Command::new("sc")
-        .args(["stop", MIHOMO_SERVICE])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output();
+/// Run a clashtui service subcommand (restart/stop) in a visible console so
+/// clashtui's own UAC elevation works and the user sees the result.
+fn run_core_service(args: &[&str]) {
+    let path = clashtui_path();
+    if path.exists() {
+        let _ = Command::new(&path)
+            .arg("service")
+            .args(args)
+            .creation_flags(CREATE_NEW_CONSOLE)
+            .spawn();
+    }
 }
 
 /// Is clashtui currently running?
@@ -312,11 +307,12 @@ struct Application {
     tray_icon: Option<TrayIcon>,
     launch_item: Arc<MenuItem>,
     web_item: Arc<MenuItem>,
+    restart_core_item: Arc<MenuItem>,
+    stop_core_item: Arc<MenuItem>,
     mode_tun: Arc<CheckMenuItem>,
     mode_sysproxy: Arc<CheckMenuItem>,
     mode_normal: Arc<CheckMenuItem>,
     autostart_item: Arc<CheckMenuItem>,
-    exit_all_item: Arc<MenuItem>,
     exit_item: Arc<MenuItem>,
 }
 
@@ -325,6 +321,8 @@ impl Application {
         let menu = Menu::new();
         let launch_item = Arc::new(MenuItem::new("启动 clashtui", true, None));
         let web_item = Arc::new(MenuItem::new("打开网页端", true, None));
+        let restart_core_item = Arc::new(MenuItem::new("重启内核", true, None));
+        let stop_core_item = Arc::new(MenuItem::new("停止内核", true, None));
         let mode = detect_mode();
         let mode_tun = Arc::new(CheckMenuItem::new("TUN 模式", true, mode == IconMode::Tun, None));
         let mode_sysproxy = Arc::new(CheckMenuItem::new(
@@ -346,11 +344,13 @@ impl Application {
             None,
         ));
         let sep = PredefinedMenuItem::separator();
-        let exit_all_item = Arc::new(MenuItem::new("退出并停止 mihomo", true, None));
-        let exit_item = Arc::new(MenuItem::new("仅退出托盘", true, None));
+        let exit_item = Arc::new(MenuItem::new("退出", true, None));
         menu.append_items(&[
             launch_item.as_ref(),
             web_item.as_ref(),
+            &PredefinedMenuItem::separator(),
+            restart_core_item.as_ref(),
+            stop_core_item.as_ref(),
             &PredefinedMenuItem::separator(),
             mode_tun.as_ref(),
             mode_sysproxy.as_ref(),
@@ -358,7 +358,6 @@ impl Application {
             &PredefinedMenuItem::separator(),
             autostart_item.as_ref(),
             &sep,
-            exit_all_item.as_ref(),
             exit_item.as_ref(),
         ])
         .expect("failed to build menu");
@@ -367,11 +366,12 @@ impl Application {
             tray_icon: None,
             launch_item,
             web_item,
+            restart_core_item,
+            stop_core_item,
             mode_tun,
             mode_sysproxy,
             mode_normal,
             autostart_item,
-            exit_all_item,
             exit_item,
         }
     }
@@ -410,13 +410,15 @@ impl Application {
             self.launch_item.as_ref(),
             self.web_item.as_ref(),
             &PredefinedMenuItem::separator(),
+            self.restart_core_item.as_ref(),
+            self.stop_core_item.as_ref(),
+            &PredefinedMenuItem::separator(),
             self.mode_tun.as_ref(),
             self.mode_sysproxy.as_ref(),
             self.mode_normal.as_ref(),
             &PredefinedMenuItem::separator(),
             self.autostart_item.as_ref(),
             &PredefinedMenuItem::separator(),
-            self.exit_all_item.as_ref(),
             self.exit_item.as_ref(),
         ])
         .expect("failed to rebuild menu");
@@ -441,8 +443,6 @@ impl ApplicationHandler<UserEvent> for Application {
         cause: winit::event::StartCause,
     ) {
         if winit::event::StartCause::Init == cause {
-            // Ensure the mihomo core is up when the tray launches.
-            start_mihomo_service();
             self.rebuild_tray();
         }
     }
@@ -464,6 +464,10 @@ impl ApplicationHandler<UserEvent> for Application {
                     launch_clashtui();
                 } else if id == self.web_item.id() {
                     open_web();
+                } else if id == self.restart_core_item.id() {
+                    run_core_service(&["restart"]);
+                } else if id == self.stop_core_item.id() {
+                    run_core_service(&["stop"]);
                 } else if id == self.mode_tun.id() {
                     apply_mode(IconMode::Tun);
                     self.refresh_mode_checks(IconMode::Tun);
@@ -480,9 +484,6 @@ impl ApplicationHandler<UserEvent> for Application {
                     let enabled = !autostart_enabled();
                     set_autostart(enabled);
                     self.autostart_item.set_checked(enabled);
-                } else if id == self.exit_all_item.id() {
-                    stop_mihomo_service();
-                    _event_loop.exit();
                 } else if id == self.exit_item.id() {
                     _event_loop.exit();
                 }
