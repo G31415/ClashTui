@@ -260,7 +260,9 @@ fn load_icon(mode: IconMode) -> Icon {
         IconMode::Normal => include_bytes!("../assets/tray_white.png").as_slice(),
     };
     if let Ok(img) = image::load_from_memory(data) {
-        let small = img.thumbnail(64, 64).into_rgba8();
+        // Use a high-resolution source so Windows can scale it crisply at
+        // any DPI. 256px is a good balance for the system tray.
+        let small = img.thumbnail(256, 256).into_rgba8();
         let (w, h) = small.dimensions();
         let rgba = small.into_raw();
         if let Ok(icon) = Icon::from_rgba(rgba, w, h) {
