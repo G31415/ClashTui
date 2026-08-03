@@ -74,6 +74,24 @@ fn launch_clashtui() {
     }
 }
 
+const MIHOMO_SERVICE: &str = "clashtui_mihomo";
+
+/// Start the mihomo core service (best-effort; may need admin rights).
+fn start_mihomo_service() {
+    let _ = Command::new("sc")
+        .args(["start", MIHOMO_SERVICE])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
+}
+
+/// Stop the mihomo core service (best-effort; may need admin rights).
+fn stop_mihomo_service() {
+    let _ = Command::new("sc")
+        .args(["stop", MIHOMO_SERVICE])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
+}
+
 /// Is clashtui currently running?
 fn clashtui_running() -> bool {
     let output = Command::new("tasklist")
@@ -298,6 +316,7 @@ struct Application {
     mode_sysproxy: Arc<CheckMenuItem>,
     mode_normal: Arc<CheckMenuItem>,
     autostart_item: Arc<CheckMenuItem>,
+    exit_all_item: Arc<MenuItem>,
     exit_item: Arc<MenuItem>,
 }
 
@@ -327,7 +346,8 @@ impl Application {
             None,
         ));
         let sep = PredefinedMenuItem::separator();
-        let exit_item = Arc::new(MenuItem::new("退出", true, None));
+        let exit_all_item = Arc::new(MenuItem::new("退出并停止 mihomo", true, None));
+        let exit_item = Arc::new(MenuItem::new("仅退出托盘", true, None));
         menu.append_items(&[
             launch_item.as_ref(),
             web_item.as_ref(),
@@ -338,6 +358,7 @@ impl Application {
             &PredefinedMenuItem::separator(),
             autostart_item.as_ref(),
             &sep,
+            exit_all_item.as_ref(),
             exit_item.as_ref(),
         ])
         .expect("failed to build menu");
@@ -350,6 +371,7 @@ impl Application {
             mode_sysproxy,
             mode_normal,
             autostart_item,
+            exit_all_item,
             exit_item,
         }
     }
@@ -394,6 +416,7 @@ impl Application {
             &PredefinedMenuItem::separator(),
             self.autostart_item.as_ref(),
             &PredefinedMenuItem::separator(),
+            self.exit_all_item.as_ref(),
             self.exit_item.as_ref(),
         ])
         .expect("failed to rebuild menu");
@@ -418,6 +441,8 @@ impl ApplicationHandler<UserEvent> for Application {
         cause: winit::event::StartCause,
     ) {
         if winit::event::StartCause::Init == cause {
+            // Ensure the mihomo core is up when the tray launches.
+            start_mihomo_service();
             self.rebuild_tray();
         }
     }
@@ -455,6 +480,9 @@ impl ApplicationHandler<UserEvent> for Application {
                     let enabled = !autostart_enabled();
                     set_autostart(enabled);
                     self.autostart_item.set_checked(enabled);
+                } else if id == self.exit_all_item.id() {
+                    stop_mihomo_service();
+                    _event_loop.exit();
                 } else if id == self.exit_item.id() {
                     _event_loop.exit();
                 }
