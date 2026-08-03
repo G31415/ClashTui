@@ -127,21 +127,20 @@ pub fn fetch_proxies() -> Result<ProxiesResponse> {
     // any unknown names back in fixes the display.
     if let Ok(prov_resp) =
         request(Method::Get, "/providers/proxies", None).and_then(|r| r.json::<serde_json::Value>())
+        && let Some(providers) = prov_resp.get("providers").and_then(|p| p.as_object())
     {
-        if let Some(providers) = prov_resp.get("providers").and_then(|p| p.as_object()) {
-            for pval in providers.values() {
-                if let Some(plist) = pval.get("proxies").and_then(|p| p.as_array()) {
-                    for pnode in plist {
-                        let name = match pnode.get("name").and_then(|n| n.as_str()) {
-                            Some(n) => n.to_string(),
-                            None => continue,
-                        };
-                        if resp.proxies.contains_key(&name) {
-                            continue;
-                        }
-                        if let Ok(p) = serde_json::from_value::<Proxy>(pnode.clone()) {
-                            resp.proxies.insert(name, p);
-                        }
+        for pval in providers.values() {
+            if let Some(plist) = pval.get("proxies").and_then(|p| p.as_array()) {
+                for pnode in plist {
+                    let name = match pnode.get("name").and_then(|n| n.as_str()) {
+                        Some(n) => n.to_string(),
+                        None => continue,
+                    };
+                    if resp.proxies.contains_key(&name) {
+                        continue;
+                    }
+                    if let Ok(p) = serde_json::from_value::<Proxy>(pnode.clone()) {
+                        resp.proxies.insert(name, p);
                     }
                 }
             }

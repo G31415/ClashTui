@@ -272,7 +272,7 @@ impl Proxies {
                     .map(|n| n.name.clone())
                     .collect();
                 for name in &folder_names {
-                    self.tree.set_sort_mode(&name, SortMode::None);
+                    self.tree.set_sort_mode(name, SortMode::None);
                 }
                 let key = self.selection_key(state);
                 self.tree.rebuild_from_proxies(&self.proxies);

@@ -42,8 +42,10 @@ pub struct ProxyTree {
 impl ProxyTree {
     pub fn build(response: crate::functions::restful::proxies::ProxiesResponse) -> Self {
         let proxies = response.proxies;
-        let mut tree = ProxyTree::default();
-        tree.sort_state = load_sort_state().unwrap_or_default();
+        let mut tree = ProxyTree {
+            sort_state: load_sort_state().unwrap_or_default(),
+            ..Default::default()
+        };
         tree.rebuild_from_proxies(&proxies);
         tree
     }
